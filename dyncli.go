@@ -16,7 +16,7 @@ func encrypt(pw string) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Your encrypted password:")
+	fmt.Println("\nYour encrypted password:\n")
 	fmt.Println(string(hashedPassword))
 	fmt.Println("\nPlease enter this string in the field 'access_key' into the domains table.\n")
 
@@ -39,24 +39,29 @@ func main() {
 	//var svar string
 	//flag.StringVar(&svar, "svar", "bar", "a string var")
 
+	// todo maybe: use flag subcommands
 	flag.Parse()
 
 	switch flag.Arg(0) {
 	case "encrypt":
 		password := flag.Arg(1)
 		if len(password) < 1 {
-			fmt.Println("Password parameter missing. ")
+			fmt.Println("\nPassword parameter missing. \n")
 			os.Exit(1)
 			//panic(err.Error()) // proper error handling instead of panic in your app
 		}
 		encrypt(password)
 	default:
-		fmt.Println("Unknown or undefined command, please use -h to show available commands")
+		fmt.Println("Unknown or undefined command, please use the following commands:\n")
+		fmt.Println("\tencrypt <password> :\t Encrypt password string to enter into database table.")
+		fmt.Println("\n\n")
+		os.Exit(1)
+		return
 	}
 
 	//fmt.Println("word:", *wordPtr)
 	//fmt.Println("numb:", *numbPtr)
 	//fmt.Println("fork:", *boolPtr)
 	//fmt.Println("svar:", svar)
-	fmt.Println("tail:", flag.Args())
+	//fmt.Println("tail:", flag.Args())
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
+	"golang.org/x/crypto/bcrypt"
 )
 
 /*
@@ -72,11 +73,37 @@ func validateRequest(dnsrecord DNSRecord) bool {
 	db := dbConn()
 	var count int
 
-	err := db.QueryRow("SELECT count(*) as cnt FROM dynrecords r, domains d WHERE d.id=r.domain_id AND r.hostname=? AND d.domainname=? AND d.access_key=?", dnsrecord.host, dnsrecord.domain, dnsrecord.accessKey).Scan(&count)
+	// 1. check api key and domain
+
+	var hashedPassword string
+	err := db.QueryRow("SELECT d.access_key FROM domains d WHERE d.domainname=?", dnsrecord.domain).Scan(&hashedPassword)
+
+	if err != nil {
+		log.Println("Database query problem: " + err.Error())
+		return false
+	}
+
+	fmt.Printf("access_key from database: %s\n", hashedPassword)
+
+	accessKeyBytes := []byte(dnsrecord.accessKey) // convert submitted api key into []byte
+	hashedPasswordBytes := []byte(hashedPassword) // the hashed password from database has to be converted, too
+
+	err = bcrypt.CompareHashAndPassword(hashedPasswordBytes, accessKeyBytes)
+	if err != nil {
+		log.Println("Wrong API key")
+		return false
+	}
+
+	log.Println("Now get host and domain")
+	//fmt.Println(err) // nil means it is a match
+
+	// 2. check if host entry exists
+
+	err = db.QueryRow("SELECT count(*) as cnt FROM dynrecords r, domains d WHERE d.id=r.domain_id AND r.hostname=? AND d.domainname=? AND d.access_key=?", dnsrecord.host, dnsrecord.domain, hashedPassword).Scan(&count)
 
 	switch {
 	case err != nil:
-		log.Fatal(err)
+		log.Println(err)
 	default:
 		fmt.Printf("Number of rows are %d\n", count)
 	}
@@ -122,7 +149,7 @@ func updateSoa(dnsrecord DNSRecord) {
 	err := db.QueryRow("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain).Scan(&content)
 	if err != nil {
 		log.Println("Database problem: " + err.Error())
-		os.Exit(1)
+		//os.Exit(1)
 		//panic(err.Error()) // proper error handling instead of panic in your app
 	}
 
@@ -150,7 +177,7 @@ func updateSoa(dnsrecord DNSRecord) {
 	updateStmt, err := db.Prepare("UPDATE records SET content=? WHERE type=? AND name=?")
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
-		os.Exit(1)
+		//os.Exit(1)
 
 	}
 	updateStmt.Exec(contentModified, "SOA", dnsrecord.domain)
@@ -165,7 +192,7 @@ func updateDynRecords(dnsrecord DNSRecord) {
 	updateStmt, err := db.Prepare("UPDATE dynrecords r, domains d SET r.host_updated=now() WHERE r.hostname=? AND r.domain_id=d.id AND d.domainname=?")
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
-		os.Exit(1)
+		//os.Exit(1)
 
 	}
 	updateStmt.Exec(dnsrecord.host, dnsrecord.domain)
