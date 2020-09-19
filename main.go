@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"log"
@@ -93,45 +94,81 @@ func updateSoa(dnsrecord DNSRecord) {
 	log.Printf("get SOA entry from records")
 	db := dbConnPdns()
 
-	results, err := db.Query("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain)
+	/*
+		results, err := db.Query("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain)
 
+		if err != nil {
+			log.Println("Database problem: " + err.Error())
+			os.Exit(1)
+			//panic(err.Error()) // proper error handling instead of panic in your app
+		}
+
+		defer results.Close()
+
+		var content string
+		for results.Next() {
+
+			// for each row, scan the result into our tag composite object
+			err = results.Scan(&content)
+			if err != nil {
+				panic(err.Error()) // proper error handling instead of panic in your app
+			}
+			// and then print out the tag's Name attribute
+
+			log.Printf(content)
+		}
+	*/
+	var content string
+	err := db.QueryRow("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain).Scan(&content)
 	if err != nil {
-		log.Println("Database problem." + err.Error())
+		log.Println("Database problem: " + err.Error())
 		os.Exit(1)
 		//panic(err.Error()) // proper error handling instead of panic in your app
 	}
 
-	for results.Next() {
-		var content string
-		// for each row, scan the result into our tag composite object
-		err = results.Scan(&content)
-		if err != nil {
-			panic(err.Error()) // proper error handling instead of panic in your app
-		}
-		// and then print out the tag's Name attribute
+	// split content into its parts, increase serial
+	// to test: is it necessary to update serial in domains table?
+	// check: will the NOTIFY request perform? Local tests seem strange now...
 
-		log.Printf(content)
-		// split content into its parts, increase serial
-		// to test: is it necessary to update serial in domains table?
-		// check: will the NOTIFY request perform? Local tests seem strange now...
+	var contentParts = strings.Split(content, " ")
 
-		var f = strings.Split(content, " ")
+	log.Println(contentParts)
+	log.Println(contentParts[2])
+	var serial, _ = strconv.ParseInt(contentParts[2], 10, 64)
+	serial = serial + 2
+	log.Println(serial)
+	var serialString = strconv.FormatInt(int64(serial), 10)
+	log.Println(serialString)
 
-		log.Println(f)
-		log.Println(f[2])
-		var serial, _ = strconv.ParseInt(f[2], 10, 64)
-		serial++
-		log.Println(serial)
-		var serialString = strconv.FormatInt(int64(serial), 10)
-		log.Println(serialString)
+	contentParts[2] = serialString
+	log.Println(contentParts)
 
-		f[2] = serialString
-		log.Println(f)
+	var contentModified = strings.Join(contentParts, " ")
 
-		var contentModified = strings.Join(f, " ")
+	log.Println(contentModified)
 
-		log.Println(contentModified)
+	updateStmt, err := db.Prepare("UPDATE records SET content=? WHERE type=? AND name=?")
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+		os.Exit(1)
+
 	}
+	updateStmt.Exec(contentModified, "SOA", dnsrecord.domain)
+
+	defer db.Close()
+
+}
+
+func updateDynRecords(dnsrecord DNSRecord) {
+	db := dbConn()
+
+	updateStmt, err := db.Prepare("UPDATE dynrecords r, domains d SET r.host_updated=now() WHERE r.hostname=? AND r.domain_id=d.id AND d.domainname=?")
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+		os.Exit(1)
+
+	}
+	updateStmt.Exec(dnsrecord.host, dnsrecord.domain)
 
 	defer db.Close()
 
@@ -166,10 +203,12 @@ func updateEntry(dnsrecord DNSRecord) {
 	log.Println("Data valid, now update!")
 
 	updateSoa(dnsrecord)
+	updateDynRecords(dnsrecord)
+	log.Println("Records updated")
 
 }
 
-func handleAPI(w http.ResponseWriter, r *http.Request) {
+func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	//keys, ok := r.URL.Query()["key"]
 
 	//log.Println(ok)
@@ -209,33 +248,21 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println(domain)
 
-	action := q.Get("action")
-	if len(action) < 1 {
-		log.Println("Action is missing")
-		fmt.Fprintf(w, "error")
-		return
-	}
+	var record DNSRecord
+	record.host = host
+	record.domain = domain
+	record.accessKey = key
+	foo := sha256.Sum256([]byte(key))
+	log.Println(foo)
 
-	fmt.Println(q.Get("action")) // currently only: update
-
-	switch action {
-	case "update":
-		var record DNSRecord
-		record.host = host
-		record.domain = domain
-		record.accessKey = key
-
-		log.Println("ok, we'll try an update!")
-		updateEntry(record)
-	default:
-		log.Println("This action is currently undefined")
-	}
+	log.Println("ok, we'll try an update!")
+	updateEntry(record)
 
 	// Query()["key"] will return an array of items,
 	// we only want the single item.
 	//key := keys[0]
 
-	log.Println("Url Param 'key' is: " + string(key))
+	//log.Println("Url Param 'key' is: " + string(key))
 	fmt.Fprintf(w, "ok")
 }
 
@@ -341,9 +368,10 @@ func main() {
 	log.Println("Server started...")
 
 	http.HandleFunc("/", handleEverything)
+	http.HandleFunc("/api", handleEverything)
 
 	//http.HandleFunc("/foo", foo)
-	http.HandleFunc("/api", handleAPI)
+	http.HandleFunc("/api/update", handleUpdate)
 
 	//fs := http.FileServer(http.Dir("static/"))
 	//http.Handle("/static/", http.StripPrefix("/static/", fs))
