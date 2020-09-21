@@ -5,26 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/geschke/dynpower/cmd"
 )
-
-func encrypt(pw string) {
-	fmt.Println("Password: ")
-	fmt.Println(pw)
-	password := []byte(pw)
-	hashedPassword, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("\nYour encrypted password:\n")
-	fmt.Println(string(hashedPassword))
-	fmt.Println("\nPlease enter this string in the field 'access_key' into the domains table.\n")
-
-	// test checking:
-	err = bcrypt.CompareHashAndPassword(hashedPassword, password)
-	fmt.Println(err) // nil means it is a match
-
-}
 
 func handleDomainCommand(fs *flag.FlagSet, dsn string) {
 	fmt.Println("handle Domain command")
@@ -86,7 +68,7 @@ func main() {
 			os.Exit(1)
 			//panic(err.Error()) // proper error handling instead of panic in your app
 		}
-		encrypt(password)
+		cmd.Encrypt(password)
 	case "domain":
 		command := flag.Arg(1)
 		if len(command) < 1 {

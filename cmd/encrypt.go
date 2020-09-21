@@ -6,7 +6,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func encrypt(pw string) {
+func Encrypt(pw string) {
 	fmt.Println("Password: ")
 	fmt.Println(pw)
 	password := []byte(pw)
