@@ -29,6 +29,7 @@ type DNSRecord struct {
 	host      string
 	domain    string
 	accessKey string
+	ip        string
 }
 
 // GetIP gets a requests IP address by reading off the forwarded-for
@@ -186,6 +187,23 @@ func updateSoa(dnsrecord DNSRecord) {
 
 }
 
+func updateRecord(dnsrecord DNSRecord) {
+	// get SOA entry
+
+	db := dbConnPdns()
+
+	updateStmt, err := db.Prepare("UPDATE records SET content=? WHERE type=? AND name=?")
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+		//os.Exit(1)
+
+	}
+	updateStmt.Exec(dnsrecord.ip, "A", dnsrecord.host+"."+dnsrecord.domain)
+
+	defer db.Close()
+
+}
+
 func updateDynRecords(dnsrecord DNSRecord) {
 	db := dbConn()
 
@@ -229,6 +247,7 @@ func updateEntry(dnsrecord DNSRecord) {
 	}
 	log.Println("Data valid, now update!")
 
+	updateRecord(dnsrecord)
 	updateSoa(dnsrecord)
 	updateDynRecords(dnsrecord)
 	log.Println("Records updated")
@@ -272,6 +291,8 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "error")
 		return
 	}
+
+	// todo get ip from query string or from request
 
 	fmt.Println(domain)
 
