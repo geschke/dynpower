@@ -300,6 +300,18 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	record.host = host
 	record.domain = domain
 	record.accessKey = key
+
+	ip := q.Get("ip") // prefer submitted IP over request IP
+	if len(ip) < 1 {
+		ip = GetIP(r)
+		if ip == "error" {
+			log.Println("Could not get IP address, exiting...")
+			return
+		}
+
+	}
+	record.ip = ip
+
 	foo := sha256.Sum256([]byte(key))
 	log.Println(foo)
 
