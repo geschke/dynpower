@@ -20,6 +20,7 @@ import (
  host=foo
  domain=example.com
  key=apikey
+
 */
 
 /*
@@ -112,9 +113,9 @@ func validateRequest(dnsrecord DNSRecord) bool {
 	defer db.Close()
 	if count != 1 {
 		return false
-	} else {
-		return true
 	}
+	return true
+
 }
 
 func updateSoa(dnsrecord DNSRecord) {
@@ -181,7 +182,10 @@ func updateSoa(dnsrecord DNSRecord) {
 		//os.Exit(1)
 
 	}
-	updateStmt.Exec(contentModified, "SOA", dnsrecord.domain)
+	_, err = updateStmt.Exec(contentModified, "SOA", dnsrecord.domain)
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+	}
 
 	defer db.Close()
 
@@ -198,7 +202,10 @@ func updateRecord(dnsrecord DNSRecord) {
 		//os.Exit(1)
 
 	}
-	updateStmt.Exec(dnsrecord.ip, "A", dnsrecord.host+"."+dnsrecord.domain)
+	_, err = updateStmt.Exec(dnsrecord.ip, "A", dnsrecord.host+"."+dnsrecord.domain)
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+	}
 
 	defer db.Close()
 
@@ -213,7 +220,11 @@ func updateDynRecords(dnsrecord DNSRecord) {
 		//os.Exit(1)
 
 	}
-	updateStmt.Exec(dnsrecord.host, dnsrecord.domain)
+	_, err = updateStmt.Exec(dnsrecord.host, dnsrecord.domain)
+
+	if err != nil {
+		log.Println("Update problem: " + err.Error())
+	}
 
 	defer db.Close()
 
