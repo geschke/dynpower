@@ -38,17 +38,25 @@ type DNSRecord struct {
 func GetIP(r *http.Request) string {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
+		parsedIP := net.ParseIP(forwarded)
+		if parsedIP != nil {
+			return string(parsedIP)
+		}
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
 			log.Printf("forwarded for: %s is not IP:port\n", forwarded)
 			return "error"
 		}
-
 		return ip
 	}
 
 	forwarded = r.Header.Get("X-Real-Ip")
 	if forwarded != "" {
+		parsedIP := net.ParseIP(forwarded)
+		if parsedIP != nil {
+			return string(parsedIP)
+		}
+
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
 			log.Printf("X-Real-Ip: %s is not IP:port\n", forwarded)
@@ -57,6 +65,10 @@ func GetIP(r *http.Request) string {
 		return ip
 	}
 
+	parsedIP := net.ParseIP(r.RemoteAddr)
+	if parsedIP != nil {
+		return string(parsedIP)
+	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		log.Printf("userip: %q is not IP:port\n", r.RemoteAddr)
@@ -287,6 +299,9 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+	} else if net.ParseIP(ip) == nil {
+		log.Println("Invalid IP, exiting...")
+		return
 	}
 	record.ip = ip
 
