@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"log"
@@ -41,15 +40,26 @@ func GetIP(r *http.Request) string {
 	if forwarded != "" {
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
-			fmt.Printf("forwarded for: %q is not IP:port", r.RemoteAddr)
+			log.Printf("forwarded for: %s is not IP:port\n", forwarded)
 			return "error"
 		}
 
 		return ip
 	}
+
+	forwarded = r.Header.Get("X-Real-Ip")
+	if forwarded != "" {
+		ip, _, err := net.SplitHostPort(forwarded)
+		if err != nil {
+			log.Printf("X-Real-Ip: %s is not IP:port\n", forwarded)
+			return "error"
+		}
+		return ip
+	}
+
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		fmt.Printf("userip: %q is not IP:port", r.RemoteAddr)
+		log.Printf("userip: %q is not IP:port\n", r.RemoteAddr)
 		return "error"
 	}
 	return ip
@@ -71,7 +81,7 @@ func foo(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateRequest(dnsrecord DNSRecord) bool {
-	log.Println(dnsrecord)
+	//log.Println(dnsrecord)
 	db := dbConn()
 	var count int
 
@@ -85,7 +95,7 @@ func validateRequest(dnsrecord DNSRecord) bool {
 		return false
 	}
 
-	fmt.Printf("access_key from database: %s\n", hashedPassword)
+	//fmt.Printf("access_key from database: %s\n", hashedPassword)
 
 	accessKeyBytes := []byte(dnsrecord.accessKey) // convert submitted api key into []byte
 	hashedPasswordBytes := []byte(hashedPassword) // the hashed password from database has to be converted, too
@@ -123,30 +133,6 @@ func updateSoa(dnsrecord DNSRecord) {
 	log.Printf("get SOA entry from records")
 	db := dbConnPdns()
 
-	/*
-		results, err := db.Query("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain)
-
-		if err != nil {
-			log.Println("Database problem: " + err.Error())
-			os.Exit(1)
-			//panic(err.Error()) // proper error handling instead of panic in your app
-		}
-
-		defer results.Close()
-
-		var content string
-		for results.Next() {
-
-			// for each row, scan the result into our tag composite object
-			err = results.Scan(&content)
-			if err != nil {
-				panic(err.Error()) // proper error handling instead of panic in your app
-			}
-			// and then print out the tag's Name attribute
-
-			log.Printf(content)
-		}
-	*/
 	var content string
 	err := db.QueryRow("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain).Scan(&content)
 	if err != nil {
@@ -231,27 +217,8 @@ func updateDynRecords(dnsrecord DNSRecord) {
 }
 
 func updateEntry(dnsrecord DNSRecord) {
-	log.Println(dnsrecord)
+	//log.Println(dnsrecord)
 
-	/*
-		if err != nil {
-			panic(err.Error())
-		}
-		for query.Next() {
-			var r DNSRecord
-			// for each row, scan the result into our tag composite object
-			err = query.Scan(&r.host, &r.domain, &r.accessKey)
-			if err != nil {
-				panic(err.Error()) // proper error handling instead of panic in your app
-			}
-			// and then print out the tag's Name attribute
-
-			log.Printf(r.host)
-			log.Printf(r.domain)
-			log.Printf(r.accessKey)
-			//log.Printf(user.ID)
-		}
-	*/
 	if !validateRequest(dnsrecord) {
 		log.Println("Invalid request data, please check host, domain and key!")
 		return
@@ -286,7 +253,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "error")
 		return
 	}
-	log.Println(key)
+	//log.Println(key)
 
 	host := q.Get("host")
 	if len(host) < 1 {
@@ -294,7 +261,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "error")
 		return
 	}
-	fmt.Println(host)
+	//fmt.Println(host)
 
 	domain := q.Get("domain")
 	if len(domain) < 1 {
@@ -305,7 +272,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// todo get ip from query string or from request
 
-	fmt.Println(domain)
+	//fmt.Println(domain)
 
 	var record DNSRecord
 	record.host = host
@@ -322,9 +289,6 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	}
 	record.ip = ip
-
-	foo := sha256.Sum256([]byte(key))
-	log.Println(foo)
 
 	log.Println("ok, we'll try an update!")
 	updateEntry(record)
@@ -394,44 +358,6 @@ func checkDbPdns() {
 }
 
 func main() {
-
-	/*fmt.Println("DBNAME: ", os.Getenv("DBNAME"))
-	fmt.Println("DBHOST:", os.Getenv("DBHOST"))
-	fmt.Println("DBUSER:", os.Getenv("DBUSER"))
-	fmt.Println("DBPASSWORD:", os.Getenv("DBPASSWORD"))
-
-	fmt.Println()
-	for _, e := range os.Environ() {
-		pair := strings.SplitN(e, "=", 2)
-		fmt.Println(pair[0])
-	}*/
-
-	/*	db := dbConn()
-
-		results, err := db.Query("SELECT r.hostname, d.domainname, d.access_key FROM dynrecords r, domains d WHERE d.id=r.domain_id")
-		if err != nil {
-			log.Println("Database problem." + err.Error())
-			os.Exit(1)
-			//panic(err.Error()) // proper error handling instead of panic in your app
-		}
-
-		for results.Next() {
-			var record DNSRecord
-			// for each row, scan the result into our tag composite object
-			err = results.Scan(&record.host, &record.domain, &record.accessKey)
-			if err != nil {
-				panic(err.Error()) // proper error handling instead of panic in your app
-			}
-			// and then print out the tag's Name attribute
-
-			log.Printf(record.host)
-			log.Printf(record.domain)
-			log.Printf(record.accessKey)
-			//log.Printf(user.ID)
-		}
-
-		defer db.Close()
-	*/
 
 	checkDb()
 	checkDbPdns()
