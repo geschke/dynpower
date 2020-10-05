@@ -40,7 +40,7 @@ func GetIP(r *http.Request) string {
 	if forwarded != "" {
 		parsedIP := net.ParseIP(forwarded)
 		if parsedIP != nil {
-			return string(parsedIP)
+			return net.IP.String(parsedIP)
 		}
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
@@ -54,7 +54,7 @@ func GetIP(r *http.Request) string {
 	if forwarded != "" {
 		parsedIP := net.ParseIP(forwarded)
 		if parsedIP != nil {
-			return string(parsedIP)
+			return net.IP.String(parsedIP)
 		}
 
 		ip, _, err := net.SplitHostPort(forwarded)
@@ -67,7 +67,7 @@ func GetIP(r *http.Request) string {
 
 	parsedIP := net.ParseIP(r.RemoteAddr)
 	if parsedIP != nil {
-		return string(parsedIP)
+		return net.IP.String(parsedIP)
 	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
