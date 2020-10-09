@@ -15,7 +15,7 @@ The solution has to meet some requirements, which I didn'd found in the amount o
 * configuration of hosts and domain allowed to update
 * items like access keys, hosts, domains should not be hard-coded to keep flexible
 
-It would have been easy to write a PHP script to handle the HTTP request, read and write database items and so on. But wait - when using PHP (or Perl, or Python...) in a Docker image, the image has to contain the whole bunch of runtime infrastructure like a webserver to handle the requests (when not using the "development" webserver integrated in PHP), PHP-FPM and the script itself. In my opinion this was exaggerated for this small task. 
+It would have been easy to write a PHP script to handle the HTTP request, read and write database items and so on. But wait - when using PHP (or Perl, or Python...) in a Docker image, the image has to contain the whole bunch of runtime infrastructure like a webserver to handle the requests (when not using the "development" webserver integrated in PHP), PHP-FPM and the script itself. In my opinion this was exaggerated for this small task.
 
 Since I wanted to deal with Golang for quite some time, this task was the perfect way to start. So I created the dynpower server module which handles the HTTP request and updates the database after checking the permissions. After this was running, I thought that would be a nice add-on to manage the configuration by a CLI tool. So dynpower-cli was written, it can list, add and delete domain and host entries.
 
@@ -26,11 +26,17 @@ And thanks to the static binding of Go binaries and Docker multi-stage build, th
 * PowerDNS Authoritative Server with MySQL/MariaDB backend
 * access to PowerDNS database server
 
+Dynpower needs a MySQL/MariaDB database to store domain and host data. So it's necessary to create a database with its access data at first. See dynpower.sql for the table definition. 
+
+If you're using the Docker image of MariaDB, you can place the dump file dynpower.sql in any directory which has to be mounted into the container. When starting the container, MariaDB executes files with extensions .sh, .sql and .sql.gz and creates the corresponding tables. See example in the docker-compose file below. 
+
+If you don't use Docker, please create a database and add a user with its grant permissions, so it is able to add and modify items. Then just import dynpower.sql to the database (e.g. ```mysql dynpower < ./sql/dynpower.sql```)
+
 ## Usage
 
 It is recommended to use the dynpower Docker image. It comes with dynpower running as server and the dynpower CLI to manage its database entries.
 
-Coming soon, I promise! Sorry, I'm ugly slow in writing this kind of documentation. ;-)
+Coming soon, I promise! Sorry, I'm terrible slow in writing this kind of documentation. ;-)
 
 ## Status
 
