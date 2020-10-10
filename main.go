@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -35,61 +36,60 @@ type DNSRecord struct {
 // GetIP gets a requests IP address by reading off the forwarded-for
 // header (for proxies) and falls back to use the remote address.
 // check x-forwarded for later...
-func GetIP(r *http.Request) string {
+func GetIP(r *http.Request) (string, error) {
 	forwarded := r.Header.Get("X-FORWARDED-FOR")
 	if forwarded != "" {
 		parsedIP := net.ParseIP(forwarded)
 		if parsedIP != nil {
-			return net.IP.String(parsedIP)
+			return net.IP.String(parsedIP), nil
 		}
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
 			log.Printf("forwarded for: %s is not IP:port\n", forwarded)
-			return "error"
+			return "", errors.New(err.Error())
 		}
-		return ip
+		return ip, nil
 	}
 
 	forwarded = r.Header.Get("X-Real-Ip")
 	if forwarded != "" {
 		parsedIP := net.ParseIP(forwarded)
 		if parsedIP != nil {
-			return net.IP.String(parsedIP)
+			return net.IP.String(parsedIP), nil
 		}
 
 		ip, _, err := net.SplitHostPort(forwarded)
 		if err != nil {
 			log.Printf("X-Real-Ip: %s is not IP:port\n", forwarded)
-			return "error"
+			return "", errors.New(err.Error())
 		}
-		return ip
+		return ip, nil
 	}
 
 	parsedIP := net.ParseIP(r.RemoteAddr)
 	if parsedIP != nil {
-		return net.IP.String(parsedIP)
+		return net.IP.String(parsedIP), nil
 	}
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		log.Printf("userip: %q is not IP:port\n", r.RemoteAddr)
-		return "error"
+		return "", errors.New(err.Error())
+
 	}
-	return ip
+	return ip, nil
 }
 
 // go get -u github.com/go-sql-driver/mysql
 
 func handleEverything(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Unknown request")
-	log.Printf(GetIP(r))
-	//for k, v := range r.URL.Query() {
-	//		fmt.Printf("%s: %s\n", k, v)
-	//}
-}
-
-func foo(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "foo")
-	fmt.Fprintf(w, "Hi there, I love %s!", r.URL.Path[1:])
+	ip, err := GetIP(r)
+	if err != nil {
+		log.Printf("Unknown request from unknown IP address")
+		return
+	}
+	log.Printf("Unknown request from IP " + ip)
+	return
 }
 
 func validateRequest(dnsrecord DNSRecord) bool {
@@ -140,7 +140,7 @@ func validateRequest(dnsrecord DNSRecord) bool {
 
 }
 
-func updateSoa(dnsrecord DNSRecord) {
+func updateSoa(dnsrecord DNSRecord) (bool, error) {
 	// get SOA entry
 	log.Printf("get SOA entry from records")
 	db := dbConnPdns()
@@ -149,9 +149,11 @@ func updateSoa(dnsrecord DNSRecord) {
 	err := db.QueryRow("SELECT content FROM records WHERE type=? AND name=?", "SOA", dnsrecord.domain).Scan(&content)
 	if err != nil {
 		log.Println("Database problem: " + err.Error())
+		return false, errors.New(err.Error())
 		//os.Exit(1)
 		//panic(err.Error()) // proper error handling instead of panic in your app
 	}
+	defer db.Close()
 
 	// split content into its parts, increase serial
 	// to test: is it necessary to update serial in domains table?
@@ -159,37 +161,38 @@ func updateSoa(dnsrecord DNSRecord) {
 
 	var contentParts = strings.Split(content, " ")
 
-	log.Println(contentParts)
-	log.Println(contentParts[2])
+	//log.Println(contentParts)
+	//log.Println(contentParts[2])
 	var serial, _ = strconv.ParseInt(contentParts[2], 10, 64)
 	serial = serial + 2
-	log.Println(serial)
+	//log.Println(serial)
 	var serialString = strconv.FormatInt(int64(serial), 10)
-	log.Println(serialString)
+	//log.Println(serialString)
 
 	contentParts[2] = serialString
-	log.Println(contentParts)
+	//log.Println(contentParts)
 
 	var contentModified = strings.Join(contentParts, " ")
 
-	log.Println(contentModified)
+	//log.Println(contentModified)
 
 	updateStmt, err := db.Prepare("UPDATE records SET content=? WHERE type=? AND name=?")
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
+		return false, errors.New(err.Error())
 		//os.Exit(1)
 
 	}
 	_, err = updateStmt.Exec(contentModified, "SOA", dnsrecord.domain)
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
+		return false, errors.New(err.Error())
 	}
-
-	defer db.Close()
+	return true, nil
 
 }
 
-func updateRecord(dnsrecord DNSRecord) {
+func updateRecord(dnsrecord DNSRecord) (bool, error) {
 	// get SOA entry
 
 	db := dbConnPdns()
@@ -203,10 +206,12 @@ func updateRecord(dnsrecord DNSRecord) {
 	_, err = updateStmt.Exec(dnsrecord.ip, "A", dnsrecord.host+"."+dnsrecord.domain)
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
+
 	}
 
 	defer db.Close()
 
+	return true, nil
 }
 
 func updateDynRecords(dnsrecord DNSRecord) {
@@ -228,25 +233,32 @@ func updateDynRecords(dnsrecord DNSRecord) {
 
 }
 
-func updateEntry(dnsrecord DNSRecord) {
+func updateEntry(dnsrecord DNSRecord) (bool, error) {
 	//log.Println(dnsrecord)
 
+	var err error
+
 	if !validateRequest(dnsrecord) {
-		log.Println("Invalid request data, please check host, domain and key!")
-		return
+		log.Println("Invalid request data, please check host, domain and key")
+		return false, errors.New("Invalid request data, please check host, domain and key")
+
 	}
 	log.Println("Data valid, now update!")
 
 	updateRecord(dnsrecord)
-	updateSoa(dnsrecord)
+	_, err = updateSoa(dnsrecord)
+	if err != nil {
+		log.Println("Error by updating SOA entry")
+		return false, errors.New("Error by updating SOA entry")
+	}
 	updateDynRecords(dnsrecord)
 	log.Println("Records updated")
-
+	return true, nil
 }
 
 func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	//keys, ok := r.URL.Query()["key"]
-
+	var err error
 	//log.Println(ok)
 
 	/*if !ok || len(keys[0]) < 1 {
@@ -261,7 +273,7 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	key := q.Get("key")
 	if len(key) < 1 {
-		log.Println("API Key is missing")
+		log.Println("Missing API key")
 		fmt.Fprintf(w, "error")
 		return
 	}
@@ -293,9 +305,10 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	ip := q.Get("ip") // prefer submitted IP over request IP
 	if len(ip) < 1 {
-		ip = GetIP(r)
-		if ip == "error" {
+		ip, err = GetIP(r)
+		if err != nil {
 			log.Println("Could not get IP address, exiting...")
+			fmt.Fprintf(w, "Error. Could not get IP address.")
 			return
 		}
 
@@ -305,8 +318,13 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	record.ip = ip
 
-	log.Println("ok, we'll try an update!")
-	updateEntry(record)
+	log.Println("Updating record...")
+	_, err = updateEntry(record)
+	if err != nil {
+		log.Println("Error: " + err.Error())
+		fmt.Fprintf(w, "An error occurred, see log entry.")
+		return
+	}
 
 	// Query()["key"] will return an array of items,
 	// we only want the single item.
@@ -314,6 +332,8 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	//log.Println("Url Param 'key' is: " + string(key))
 	fmt.Fprintf(w, "ok")
+	return
+
 }
 
 func dbConn() (db *sql.DB) {
