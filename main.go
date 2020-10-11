@@ -23,9 +23,7 @@ import (
 
 */
 
-/*
- * DNSRecord type
- */
+// DNSRecord is a struct to collect the data collected by request to update the database
 type DNSRecord struct {
 	host      string
 	domain    string
@@ -79,8 +77,7 @@ func GetIP(r *http.Request) (string, error) {
 	return ip, nil
 }
 
-// go get -u github.com/go-sql-driver/mysql
-
+// Handle all requests which do not match
 func handleEverything(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Unknown request")
 	ip, err := GetIP(r)
@@ -92,7 +89,8 @@ func handleEverything(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func validateRequest(dnsrecord DNSRecord) bool {
+// Validate domain and access key
+func validateRequest(dnsrecord DNSRecord) (bool, error) {
 	//log.Println(dnsrecord)
 	db := dbConn()
 	var count int
@@ -102,12 +100,12 @@ func validateRequest(dnsrecord DNSRecord) bool {
 	var hashedPassword string
 	err := db.QueryRow("SELECT d.access_key FROM domains d WHERE d.domainname=?", dnsrecord.domain).Scan(&hashedPassword)
 
+	defer db.Close()
 	if err != nil {
 		log.Println("Database query problem: " + err.Error())
-		return false
-	}
+		return false, errors.New("Database query problem: " + err.Error())
 
-	//fmt.Printf("access_key from database: %s\n", hashedPassword)
+	}
 
 	accessKeyBytes := []byte(dnsrecord.accessKey) // convert submitted api key into []byte
 	hashedPasswordBytes := []byte(hashedPassword) // the hashed password from database has to be converted, too
@@ -115,31 +113,26 @@ func validateRequest(dnsrecord DNSRecord) bool {
 	err = bcrypt.CompareHashAndPassword(hashedPasswordBytes, accessKeyBytes)
 	if err != nil {
 		log.Println("Wrong API key")
-		return false
+		return false, nil // no error, but wrong API key
 	}
-
-	log.Println("Now get host and domain")
-	//fmt.Println(err) // nil means it is a match
 
 	// 2. check if host entry exists
 
 	err = db.QueryRow("SELECT count(*) as cnt FROM dynrecords r, domains d WHERE d.id=r.domain_id AND r.hostname=? AND d.domainname=? AND d.access_key=?", dnsrecord.host, dnsrecord.domain, hashedPassword).Scan(&count)
 
-	switch {
-	case err != nil:
-		log.Println(err)
-	default:
-		fmt.Printf("Number of rows are %d\n", count)
+	if err != nil {
+		log.Println("Database query problem: " + err.Error())
+		return false, errors.New("Database query problem: " + err.Error())
 	}
 
-	defer db.Close()
 	if count != 1 {
-		return false
+		return false, errors.New("Wrong number of hosts found")
 	}
-	return true
+	return true, nil
 
 }
 
+// Update SOA entry in PowerDNS records table
 func updateSoa(dnsrecord DNSRecord) (bool, error) {
 	// get SOA entry
 	log.Printf("get SOA entry from records")
@@ -150,14 +143,10 @@ func updateSoa(dnsrecord DNSRecord) (bool, error) {
 	if err != nil {
 		log.Println("Database problem: " + err.Error())
 		return false, errors.New(err.Error())
-		//os.Exit(1)
-		//panic(err.Error()) // proper error handling instead of panic in your app
 	}
 	defer db.Close()
 
-	// split content into its parts, increase serial
-	// to test: is it necessary to update serial in domains table?
-	// check: will the NOTIFY request perform? Local tests seem strange now...
+	// split content into its parts, increase serial to perform AXFR
 
 	var contentParts = strings.Split(content, " ")
 
@@ -192,34 +181,40 @@ func updateSoa(dnsrecord DNSRecord) (bool, error) {
 
 }
 
+// Update host in PowerDNS record table with new IP address
 func updateRecord(dnsrecord DNSRecord) (bool, error) {
 	// get SOA entry
 
 	db := dbConnPdns()
 
+	defer db.Close()
+
 	updateStmt, err := db.Prepare("UPDATE records SET content=? WHERE type=? AND name=?")
 	if err != nil {
-		log.Println("Update problem: " + err.Error())
-		//os.Exit(1)
+		log.Println("Prepare record update problem: " + err.Error())
+		return false, errors.New("Prepare record update problem: " + err.Error())
 
 	}
 	_, err = updateStmt.Exec(dnsrecord.ip, "A", dnsrecord.host+"."+dnsrecord.domain)
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
+		return false, errors.New("Update record problem: " + err.Error())
 
 	}
-
-	defer db.Close()
 
 	return true, nil
 }
 
-func updateDynRecords(dnsrecord DNSRecord) {
+// Update dynrecords table with new timestamp of last update
+func updateDynRecords(dnsrecord DNSRecord) (bool, error) {
 	db := dbConn()
+
+	defer db.Close()
 
 	updateStmt, err := db.Prepare("UPDATE dynrecords r, domains d SET r.host_updated=now() WHERE r.hostname=? AND r.domain_id=d.id AND d.domainname=?")
 	if err != nil {
-		log.Println("Update problem: " + err.Error())
+		log.Println("Prepare update problem: " + err.Error())
+		return false, errors.New("Prepare update problem: " + err.Error())
 		//os.Exit(1)
 
 	}
@@ -227,45 +222,56 @@ func updateDynRecords(dnsrecord DNSRecord) {
 
 	if err != nil {
 		log.Println("Update problem: " + err.Error())
+		return false, errors.New("Update problem: " + err.Error())
 	}
-
-	defer db.Close()
-
+	return true, nil
 }
 
+// Update PowerDNS and dynpower database after validating request
 func updateEntry(dnsrecord DNSRecord) (bool, error) {
 	//log.Println(dnsrecord)
 
 	var err error
 
-	if !validateRequest(dnsrecord) {
+	requestValid, err := validateRequest(dnsrecord)
+
+	if err != nil {
+		log.Println("Error by validating request data " + err.Error())
+		return false, errors.New("Error by validating request data " + err.Error())
+	}
+
+	if requestValid == false {
 		log.Println("Invalid request data, please check host, domain and key")
 		return false, errors.New("Invalid request data, please check host, domain and key")
 
 	}
 	log.Println("Data valid, now update!")
 
-	updateRecord(dnsrecord)
+	_, err = updateRecord(dnsrecord)
+	if err != nil {
+		log.Println("Error by updating records entry")
+		return false, errors.New("Error by updating records entry")
+	}
 	_, err = updateSoa(dnsrecord)
 	if err != nil {
 		log.Println("Error by updating SOA entry")
 		return false, errors.New("Error by updating SOA entry")
 	}
-	updateDynRecords(dnsrecord)
-	log.Println("Records updated")
+	_, err = updateDynRecords(dnsrecord)
+	if err != nil {
+		log.Println("Error by updating dynrecords entry")
+		return false, errors.New("Error by updating dynrecords entry")
+	}
+
+	log.Println("All records updated")
 	return true, nil
 }
 
+// Handle the update request: get request data and call update function in case of no error
 func handleUpdate(w http.ResponseWriter, r *http.Request) {
-	//keys, ok := r.URL.Query()["key"]
-	var err error
-	//log.Println(ok)
 
-	/*if !ok || len(keys[0]) < 1 {
-		log.Println("Url Param 'key' is missing")
-		fmt.Fprintf(w, "error")
-		return
-	}*/
+	var err error
+	var record DNSRecord
 
 	q := r.URL.Query()
 
@@ -294,31 +300,31 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// todo get ip from query string or from request
+	// get ip from query string or from request
 
-	//fmt.Println(domain)
-
-	var record DNSRecord
 	record.host = host
 	record.domain = domain
 	record.accessKey = key
+
+	// todo maybe: use HTTP error codes
 
 	ip := q.Get("ip") // prefer submitted IP over request IP
 	if len(ip) < 1 {
 		ip, err = GetIP(r)
 		if err != nil {
 			log.Println("Could not get IP address, exiting...")
-			fmt.Fprintf(w, "Error. Could not get IP address.")
+			fmt.Fprintf(w, "An error occurred, see log entry.")
 			return
 		}
 
 	} else if net.ParseIP(ip) == nil {
 		log.Println("Invalid IP, exiting...")
+		fmt.Fprintf(w, "An error occurred, see log entry.")
 		return
 	}
 	record.ip = ip
 
-	log.Println("Updating record...")
+	log.Println("Try to update record...")
 	_, err = updateEntry(record)
 	if err != nil {
 		log.Println("Error: " + err.Error())
@@ -326,16 +332,12 @@ func handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query()["key"] will return an array of items,
-	// we only want the single item.
-	//key := keys[0]
-
-	//log.Println("Url Param 'key' is: " + string(key))
 	fmt.Fprintf(w, "ok")
 	return
 
 }
 
+// Create connection to dynpower database
 func dbConn() (db *sql.DB) {
 	dbname := os.Getenv("DBNAME")
 	dbhost := os.Getenv("DBHOST")
@@ -350,6 +352,7 @@ func dbConn() (db *sql.DB) {
 	return db
 }
 
+// Create connection to PowerDNS database
 func dbConnPdns() (db *sql.DB) {
 	dbname := os.Getenv("PDNS_DBNAME")
 	dbhost := os.Getenv("PDNS_DBHOST")
@@ -364,9 +367,7 @@ func dbConnPdns() (db *sql.DB) {
 	return db
 }
 
-/*
- *	Check database connection by performing a query, exit in error case
- */
+// Check database connection by performing a query, exit in error case
 func checkDb() {
 	db := dbConn()
 	_, err := db.Query("SELECT r.hostname, d.domainname, d.access_key FROM dynrecords r, domains d WHERE d.id=r.domain_id")
@@ -378,9 +379,7 @@ func checkDb() {
 	return
 }
 
-/*
- *	Check PowerDNS  database connection by performing a query, exit in error case
- */
+// Check PowerDNS database connection by performing a query, exit in error case
 func checkDbPdns() {
 	db := dbConnPdns()
 	_, err := db.Query("SELECT * FROM domains")
@@ -397,16 +396,12 @@ func main() {
 	checkDb()
 	checkDbPdns()
 
-	log.Println("Server started...")
+	log.Println("dynpower server started...")
 
 	http.HandleFunc("/", handleEverything)
 	http.HandleFunc("/api", handleEverything)
 
-	//http.HandleFunc("/foo", foo)
 	http.HandleFunc("/api/update", handleUpdate)
-
-	//fs := http.FileServer(http.Dir("static/"))
-	//http.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	http.ListenAndServe(":8080", nil)
 }
